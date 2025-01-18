@@ -7,6 +7,9 @@ on:
     branches:
       - main
 
+permissions:
+    contents: read
+
 jobs:
 
   Static-Analysis:
@@ -14,7 +17,7 @@ jobs:
     name: "Static analysis"
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4.2.2
 
       - name: Bootstrap environment
         uses: ./.github/actions/bootstrap
@@ -28,31 +31,12 @@ jobs:
     name: "Unit tests"
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4.2.2
 
       - name: Bootstrap environment
         uses: ./.github/actions/bootstrap
-
-      - name: Restore Java test-fixture cache
-        id: unit-java-cache
-        uses: actions/cache@v3
         with:
-          path: syft/pkg/cataloger/java/test-fixtures/java-builds/packages
-          key: ${{ runner.os }}-unit-java-cache-${{ hashFiles( 'syft/pkg/cataloger/java/test-fixtures/java-builds/packages.fingerprint' ) }}
-
-      - name: Restore RPM test-fixture cache
-        id: unit-rpm-cache
-        uses: actions/cache@v3
-        with:
-          path: syft/pkg/cataloger/rpm/test-fixtures/rpms
-          key: ${{ runner.os }}-unit-rpm-cache-${{ hashFiles( 'syft/pkg/cataloger/rpm/test-fixtures/rpms.fingerprint' ) }}
-
-      - name: Restore go binary test-fixture cache
-        id: unit-go-binary-cache
-        uses: actions/cache@v3
-        with:
-          path: syft/pkg/cataloger/golang/test-fixtures/archs/binaries
-          key: ${{ runner.os }}-unit-go-binaries-cache-${{ hashFiles( 'syft/pkg/cataloger/golang/test-fixtures/archs/binaries.fingerprint' ) }}
+          download-test-fixture-cache: true
 
       - name: Run unit tests
         run: make unit
@@ -63,19 +47,15 @@ jobs:
     name: "Integration tests"
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4.2.2
 
       - name: Bootstrap environment
         uses: ./.github/actions/bootstrap
+        with:
+          download-test-fixture-cache: true
 
       - name: Validate syft output against the CycloneDX schema
         run: make validate-cyclonedx-schema
-
-      - name: Restore integration test cache
-        uses: actions/cache@v3
-        with:
-          path: ${{ github.workspace }}/test/integration/test-fixtures/cache
-          key: ${{ runner.os }}-integration-test-cache-${{ hashFiles('test/integration/test-fixtures/cache.fingerprint') }}
 
       - name: Run integration tests
         run: make integration
@@ -85,17 +65,11 @@ jobs:
     name: "Build snapshot artifacts"
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4.2.2
 
       - name: Bootstrap environment
         uses: ./.github/actions/bootstrap
         with:
-          # why have another build cache key? We don't want unit/integration/etc test build caches to replace
-          # the snapshot build cache, which includes builds for all OSs and architectures. As long as this key is
-          # unique from the build-cache-key-prefix in other CI jobs, we should be fine.
-          #
-          # note: ideally this value should match what is used in release (just to help with build times).
-          build-cache-key-prefix: "snapshot"
           bootstrap-apt-packages: ""
 
       - name: Build snapshot artifacts
@@ -104,9 +78,14 @@ jobs:
       # why not use actions/upload-artifact? It is very slow (3 minutes to upload ~600MB of data, vs 10 seconds with this approach).
       # see https://github.com/actions/upload-artifact/issues/199 for more info
       - name: Upload snapshot artifacts
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57 #v4.2.0
         with:
-          path: snapshot
+          # we need to preserve the snapshot data itself as well as the task data that confirms if the
+          # snapshot build is stale or not. Otherwise the downstream jobs will attempt to rebuild the snapshot
+          # even though it already exists.
+          path: |
+            snapshot
+            .task
           key: snapshot-build-${{ github.run_id }}
 
 
@@ -116,23 +95,30 @@ jobs:
     needs: [Build-Snapshot-Artifacts]
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4.2.2
+
+      - name: Bootstrap environment
+        uses: ./.github/actions/bootstrap
+        with:
+          download-test-fixture-cache: true
 
       - name: Download snapshot build
-        uses: actions/cache/restore@v3
+        id: snapshot-cache
+        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 #v4.2.0
         with:
-          path: snapshot
+          path: |
+            snapshot
+            .task
+          fail-on-cache-miss: true
           key: snapshot-build-${{ github.run_id }}
+
+      # workaround for https://github.com/actions/cache/issues/1265
+      - name: (cache-miss) Snapshot build missing
+        if: steps.snapshot-cache.outputs.cache-hit != 'true'
+        run: echo "unable to download snapshots from previous job" && false
 
       - name: Run comparison tests (Linux)
         run: make compare-linux
-
-      - name: Restore install.sh test image cache
-        id: install-test-image-cache
-        uses: actions/cache@v3
-        with:
-          path: ${{ github.workspace }}/test/install/cache
-          key: ${{ runner.os }}-install-test-image-cache-${{ hashFiles('test/install/cache.fingerprint') }}
 
       - name: Load test image cache
         if: steps.install-test-image-cache.outputs.cache-hit == 'true'
@@ -152,28 +138,32 @@ jobs:
     needs: [Build-Snapshot-Artifacts]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.7.0
 
-      # TODO: remove this when actions/cache + mac runner is fixed
-      # see https://github.com/actions/cache/issues/1110
-      - name: Downgrade zstd on macOS
-        run: |
-          brew uninstall --ignore-dependencies zstd
-          git -C "$(brew --repo homebrew/core)" checkout d3f04bd Formula/zstd.rb
-          brew install zstd
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4.2.2
+
+      - name: Bootstrap environment
+        uses: ./.github/actions/bootstrap
+        with:
+          bootstrap-apt-packages: ""
+          go-dependencies: false
+          download-test-fixture-cache: true
 
       - name: Download snapshot build
-        uses: actions/cache/restore@v3
+        id: snapshot-cache
+        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 #v4.2.0
         with:
-          path: snapshot
+          path: |
+            snapshot
+            .task
+          fail-on-cache-miss: true
           key: snapshot-build-${{ github.run_id }}
 
-      - name: Restore docker image cache for compare testing
-        id: mac-compare-testing-cache
-        uses: actions/cache@v3
-        with:
-          path: image.tar
-          key: ${{ runner.os }}-${{ hashFiles('test/compare/mac.sh') }}
+      # workaround for https://github.com/actions/cache/issues/1265
+      - name: (cache-miss) Snapshot build missing
+        if: steps.snapshot-cache.outputs.cache-hit != 'true'
+        run: echo "unable to download snapshots from previous job" && false
 
       - name: Run comparison tests (Mac)
         run: make compare-mac
@@ -188,22 +178,46 @@ jobs:
     needs: [Build-Snapshot-Artifacts]
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4.2.2
 
       - name: Bootstrap environment
         uses: ./.github/actions/bootstrap
-
-      - name: Restore CLI test-fixture cache
-        uses: actions/cache@v3
         with:
-          path: ${{ github.workspace }}/test/cli/test-fixtures/cache
-          key: ${{ runner.os }}-cli-test-cache-${{ hashFiles('test/cli/test-fixtures/cache.fingerprint') }}
+          download-test-fixture-cache: true
 
       - name: Download snapshot build
-        uses: actions/cache/restore@v3
+        id: snapshot-cache
+        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 #v4.2.0
         with:
-          path: snapshot
+          path: |
+            snapshot
+            .task
+          fail-on-cache-miss: true
           key: snapshot-build-${{ github.run_id }}
+
+      # workaround for https://github.com/actions/cache/issues/1265
+      - name: (cache-miss) Snapshot build missing
+        if: steps.snapshot-cache.outputs.cache-hit != 'true'
+        run: echo "unable to download snapshots from previous job" && false
 
       - name: Run CLI Tests (Linux)
         run: make cli
+
+
+  Cleanup-Cache:
+    name: "Cleanup snapshot cache"
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-20.04
+    permissions:
+      actions: write
+    needs:
+      - Acceptance-Linux
+      - Acceptance-Mac
+      - Cli-Linux
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4.2.2
+
+      - name: Delete snapshot cache
+        run: gh cache delete "snapshot-build-${{ github.run_id }}"
+        env:
+          GH_TOKEN: ${{ github.token }}

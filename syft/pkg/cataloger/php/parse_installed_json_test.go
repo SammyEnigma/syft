@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"github.com/anchore/syft/syft/artifact"
+	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/pkg/cataloger/internal/pkgtest"
-	"github.com/anchore/syft/syft/source"
 )
 
 func TestParseInstalledJsonComposerV1(t *testing.T) {
@@ -18,13 +18,15 @@ func TestParseInstalledJsonComposerV1(t *testing.T) {
 	var expectedRelationships []artifact.Relationship
 	var expectedPkgs = []pkg.Package{
 		{
-			Name:         "asm89/stack-cors",
-			Version:      "1.3.0",
-			PURL:         "pkg:composer/asm89/stack-cors@1.3.0",
-			Language:     pkg.PHP,
-			Type:         pkg.PhpComposerPkg,
-			MetadataType: pkg.PhpComposerJSONMetadataType,
-			Metadata: pkg.PhpComposerJSONMetadata{
+			Name:     "asm89/stack-cors",
+			Version:  "1.3.0",
+			PURL:     "pkg:composer/asm89/stack-cors@1.3.0",
+			Language: pkg.PHP,
+			Type:     pkg.PhpComposerPkg,
+			Licenses: pkg.NewLicenseSet(
+				pkg.NewLicense("MIT"),
+			),
+			Metadata: pkg.PhpComposerInstalledEntry{
 				Name:    "asm89/stack-cors",
 				Version: "1.3.0",
 				Source: pkg.PhpComposerExternalReference{
@@ -49,9 +51,6 @@ func TestParseInstalledJsonComposerV1(t *testing.T) {
 				Time:            "2019-12-24T22:41:47+00:00",
 				Type:            "library",
 				NotificationURL: "https://packagist.org/downloads/",
-				License: []string{
-					"MIT",
-				},
 				Authors: []pkg.PhpComposerAuthors{
 					{
 						Name:  "Alexander",
@@ -68,13 +67,15 @@ func TestParseInstalledJsonComposerV1(t *testing.T) {
 			},
 		},
 		{
-			Name:         "behat/mink",
-			Version:      "v1.8.1",
-			PURL:         "pkg:composer/behat/mink@v1.8.1",
-			Language:     pkg.PHP,
-			Type:         pkg.PhpComposerPkg,
-			MetadataType: pkg.PhpComposerJSONMetadataType,
-			Metadata: pkg.PhpComposerJSONMetadata{
+			Name:     "behat/mink",
+			Version:  "v1.8.1",
+			PURL:     "pkg:composer/behat/mink@v1.8.1",
+			Language: pkg.PHP,
+			Type:     pkg.PhpComposerPkg,
+			Licenses: pkg.NewLicenseSet(
+				pkg.NewLicense("MIT"),
+			),
+			Metadata: pkg.PhpComposerInstalledEntry{
 				Name:    "behat/mink",
 				Version: "v1.8.1",
 				Source: pkg.PhpComposerExternalReference{
@@ -106,9 +107,6 @@ func TestParseInstalledJsonComposerV1(t *testing.T) {
 				Time:            "2020-03-11T15:45:53+00:00",
 				Type:            "library",
 				NotificationURL: "https://packagist.org/downloads/",
-				License: []string{
-					"MIT",
-				},
 				Authors: []pkg.PhpComposerAuthors{
 					{
 						Name:     "Konstantin Kudryashov",
@@ -130,12 +128,24 @@ func TestParseInstalledJsonComposerV1(t *testing.T) {
 
 	for _, fixture := range fixtures {
 		t.Run(fixture, func(t *testing.T) {
-			locations := source.NewLocationSet(source.NewLocation(fixture))
+			locations := file.NewLocationSet(file.NewLocation(fixture))
 			for i := range expectedPkgs {
 				expectedPkgs[i].Locations = locations
+				locationLicenses := pkg.NewLicenseSet()
+				for _, license := range expectedPkgs[i].Licenses.ToSlice() {
+					license.Locations = locations
+					locationLicenses.Add(license)
+				}
+				expectedPkgs[i].Licenses = locationLicenses
 			}
 			pkgtest.TestFileParser(t, fixture, parseInstalledJSON, expectedPkgs, expectedRelationships)
 		})
 	}
+}
 
+func Test_corruptInstalledJSON(t *testing.T) {
+	pkgtest.NewCatalogTester().
+		FromFile(t, "test-fixtures/glob-paths/src/installed.json").
+		WithError().
+		TestParser(t, parseInstalledJSON)
 }

@@ -3,7 +3,6 @@ package cli
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/sergi/go-diff/diffmatchpatch"
@@ -70,8 +69,8 @@ func TestPersistentFlags(t *testing.T) {
 	}{
 		{
 			name: "quiet-flag",
-			// note: the root command will always show the deprecation warning, so the packages command is used instead
-			args: []string{"packages", "-q", request},
+			// note: the root command will always show the deprecation warning, so the scan command is used instead
+			args: []string{"scan", "-q", request},
 			assertions: []traitAssertion{
 				func(tb testing.TB, stdout, stderr string, rc int) {
 					// ensure there is no status
@@ -109,11 +108,7 @@ func TestPersistentFlags(t *testing.T) {
 			for _, traitFn := range test.assertions {
 				traitFn(t, stdout, stderr, cmd.ProcessState.ExitCode())
 			}
-			if t.Failed() {
-				t.Log("STDOUT:\n", stdout)
-				t.Log("STDERR:\n", stderr)
-				t.Log("COMMAND:", strings.Join(cmd.Args, " "))
-			}
+			logOutputOnFailure(t, cmd, stdout, stderr)
 		})
 	}
 }
@@ -151,11 +146,7 @@ func TestLogFile(t *testing.T) {
 			for _, traitFn := range test.assertions {
 				traitFn(t, stdout, stderr, cmd.ProcessState.ExitCode())
 			}
-			if t.Failed() {
-				t.Log("STDOUT:\n", stdout)
-				t.Log("STDERR:\n", stderr)
-				t.Log("COMMAND:", strings.Join(cmd.Args, " "))
-			}
+			logOutputOnFailure(t, cmd, stdout, stderr)
 		})
 	}
 }

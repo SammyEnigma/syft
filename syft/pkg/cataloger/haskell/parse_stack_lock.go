@@ -1,16 +1,19 @@
 package haskell
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/anchore/syft/internal/log"
+	"github.com/anchore/syft/internal/unknown"
 	"github.com/anchore/syft/syft/artifact"
+	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/pkg/cataloger/generic"
-	"github.com/anchore/syft/syft/source"
 )
 
 var _ generic.Parser = parseStackLock
@@ -38,7 +41,7 @@ type completedSnapshot struct {
 }
 
 // parseStackLock is a parser function for stack.yaml.lock contents, returning all packages discovered.
-func parseStackLock(_ source.FileResolver, _ *generic.Environment, reader source.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
+func parseStackLock(_ context.Context, _ file.Resolver, _ *generic.Environment, reader file.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
 	bytes, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load stack.yaml.lock file: %w", err)
@@ -47,7 +50,8 @@ func parseStackLock(_ source.FileResolver, _ *generic.Environment, reader source
 	var lockFile stackLock
 
 	if err := yaml.Unmarshal(bytes, &lockFile); err != nil {
-		return nil, nil, fmt.Errorf("failed to parse stack.yaml.lock file: %w", err)
+		log.WithFields("error", err).Tracef("failed to parse stack.yaml.lock file %q", reader.RealPath)
+		return nil, nil, fmt.Errorf("failed to parse stack.yaml.lock file")
 	}
 
 	var (
@@ -61,22 +65,40 @@ func parseStackLock(_ source.FileResolver, _ *generic.Environment, reader source
 	}
 
 	for _, pack := range lockFile.Packages {
+		if pack.Completed.Hackage == "" {
+			continue
+		}
 		pkgName, pkgVersion, pkgHash := parseStackPackageEncoding(pack.Completed.Hackage)
-		pkgs = append(pkgs, newPackage(pkgName, pkgVersion, &pkg.HackageMetadata{
-			PkgHash:     pkgHash,
-			SnapshotURL: snapshotURL,
-		}, reader.Location))
+		pkgs = append(
+			pkgs,
+			newPackage(
+				pkgName,
+				pkgVersion,
+				pkg.HackageStackYamlLockEntry{
+					PkgHash:     pkgHash,
+					SnapshotURL: snapshotURL,
+				},
+				reader.Location,
+			),
+		)
 	}
 
-	return pkgs, nil, nil
+	return pkgs, nil, unknown.IfEmptyf(pkgs, "unable to determine packages")
 }
+
 func parseStackPackageEncoding(pkgEncoding string) (name, version, hash string) {
 	lastDashIdx := strings.LastIndex(pkgEncoding, "-")
+	if lastDashIdx == -1 {
+		name = pkgEncoding
+		return
+	}
 	name = pkgEncoding[:lastDashIdx]
 	remainingEncoding := pkgEncoding[lastDashIdx+1:]
 	encodingSplits := strings.Split(remainingEncoding, "@")
 	version = encodingSplits[0]
-	startHash, endHash := strings.Index(encodingSplits[1], ":")+1, strings.Index(encodingSplits[1], ",")
-	hash = encodingSplits[1][startHash:endHash]
+	if len(encodingSplits) > 1 {
+		startHash, endHash := strings.Index(encodingSplits[1], ":")+1, strings.Index(encodingSplits[1], ",")
+		hash = encodingSplits[1][startHash:endHash]
+	}
 	return
 }

@@ -4,25 +4,27 @@ import (
 	"testing"
 
 	"github.com/anchore/syft/syft/artifact"
+	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/pkg/cataloger/internal/pkgtest"
-	"github.com/anchore/syft/syft/source"
 )
 
 func TestParseComposerFileLock(t *testing.T) {
 	var expectedRelationships []artifact.Relationship
 	fixture := "test-fixtures/composer.lock"
-	locations := source.NewLocationSet(source.NewLocation(fixture))
+	locations := file.NewLocationSet(file.NewLocation(fixture))
 	expectedPkgs := []pkg.Package{
 		{
-			Name:         "adoy/fastcgi-client",
-			Version:      "1.0.2",
-			PURL:         "pkg:composer/adoy/fastcgi-client@1.0.2",
-			Locations:    locations,
-			Language:     pkg.PHP,
-			Type:         pkg.PhpComposerPkg,
-			MetadataType: pkg.PhpComposerJSONMetadataType,
-			Metadata: pkg.PhpComposerJSONMetadata{
+			Name:      "adoy/fastcgi-client",
+			Version:   "1.0.2",
+			PURL:      "pkg:composer/adoy/fastcgi-client@1.0.2",
+			Locations: locations,
+			Licenses: pkg.NewLicenseSet(
+				pkg.NewLicenseFromLocations("MIT", file.NewLocation(fixture)),
+			),
+			Language: pkg.PHP,
+			Type:     pkg.PhpComposerPkg,
+			Metadata: pkg.PhpComposerLockEntry{
 				Name:    "adoy/fastcgi-client",
 				Version: "1.0.2",
 				Source: pkg.PhpComposerExternalReference{
@@ -37,9 +39,6 @@ func TestParseComposerFileLock(t *testing.T) {
 				},
 				Type:            "library",
 				NotificationURL: "https://packagist.org/downloads/",
-				License: []string{
-					"MIT",
-				},
 				Authors: []pkg.PhpComposerAuthors{
 					{
 						Name:  "Pierrick Charron",
@@ -55,14 +54,16 @@ func TestParseComposerFileLock(t *testing.T) {
 			},
 		},
 		{
-			Name:         "alcaeus/mongo-php-adapter",
-			Version:      "1.1.11",
-			Locations:    locations,
-			PURL:         "pkg:composer/alcaeus/mongo-php-adapter@1.1.11",
-			Language:     pkg.PHP,
-			Type:         pkg.PhpComposerPkg,
-			MetadataType: pkg.PhpComposerJSONMetadataType,
-			Metadata: pkg.PhpComposerJSONMetadata{
+			Name:      "alcaeus/mongo-php-adapter",
+			Version:   "1.1.11",
+			Locations: locations,
+			PURL:      "pkg:composer/alcaeus/mongo-php-adapter@1.1.11",
+			Language:  pkg.PHP,
+			Licenses: pkg.NewLicenseSet(
+				pkg.NewLicenseFromLocations("MIT", file.NewLocation(fixture)),
+			),
+			Type: pkg.PhpComposerPkg,
+			Metadata: pkg.PhpComposerLockEntry{
 				Name:    "alcaeus/mongo-php-adapter",
 				Version: "1.1.11",
 				Source: pkg.PhpComposerExternalReference{
@@ -91,9 +92,6 @@ func TestParseComposerFileLock(t *testing.T) {
 				},
 				Type:            "library",
 				NotificationURL: "https://packagist.org/downloads/",
-				License: []string{
-					"MIT",
-				},
 				Authors: []pkg.PhpComposerAuthors{
 					{
 						Name:  "alcaeus",
@@ -114,4 +112,11 @@ func TestParseComposerFileLock(t *testing.T) {
 		},
 	}
 	pkgtest.TestFileParser(t, fixture, parseComposerLock, expectedPkgs, expectedRelationships)
+}
+
+func Test_corruptComposerLock(t *testing.T) {
+	pkgtest.NewCatalogTester().
+		FromFile(t, "test-fixtures/glob-paths/src/composer.lock").
+		WithError().
+		TestParser(t, parseComposerLock)
 }

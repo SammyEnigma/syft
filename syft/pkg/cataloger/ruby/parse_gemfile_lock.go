@@ -2,21 +2,24 @@ package ruby
 
 import (
 	"bufio"
+	"context"
 	"strings"
 
-	"github.com/anchore/syft/internal"
+	"github.com/scylladb/go-set/strset"
+
+	"github.com/anchore/syft/internal/unknown"
 	"github.com/anchore/syft/syft/artifact"
+	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/pkg/cataloger/generic"
-	"github.com/anchore/syft/syft/source"
 )
 
 var _ generic.Parser = parseGemFileLockEntries
 
-var sectionsOfInterest = internal.NewStringSet("GEM")
+var sectionsOfInterest = strset.New("GEM", "GIT", "PATH", "PLUGIN SOURCE")
 
 // parseGemFileLockEntries is a parser function for Gemfile.lock contents, returning all Gems discovered.
-func parseGemFileLockEntries(_ source.FileResolver, _ *generic.Environment, reader source.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
+func parseGemFileLockEntries(_ context.Context, _ file.Resolver, _ *generic.Environment, reader file.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
 	var pkgs []pkg.Package
 	scanner := bufio.NewScanner(reader)
 
@@ -30,7 +33,7 @@ func parseGemFileLockEntries(_ source.FileResolver, _ *generic.Environment, read
 			// start of section
 			currentSection = sanitizedLine
 			continue
-		} else if !sectionsOfInterest.Contains(currentSection) {
+		} else if !sectionsOfInterest.Has(currentSection) {
 			// skip this line, we're in the wrong section
 			continue
 		}
@@ -44,7 +47,7 @@ func parseGemFileLockEntries(_ source.FileResolver, _ *generic.Environment, read
 				newGemfileLockPackage(
 					candidate[0],
 					strings.Trim(candidate[1], "()"),
-					reader.Location,
+					reader.Location.WithAnnotation(pkg.EvidenceAnnotationKey, pkg.PrimaryEvidenceAnnotation),
 				),
 			)
 		}
@@ -52,7 +55,7 @@ func parseGemFileLockEntries(_ source.FileResolver, _ *generic.Environment, read
 	if err := scanner.Err(); err != nil {
 		return nil, nil, err
 	}
-	return pkgs, nil, nil
+	return pkgs, nil, unknown.IfEmptyf(pkgs, "unable to determine packages")
 }
 
 func isDependencyLine(line string) bool {

@@ -2,6 +2,7 @@ package golang
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"sort"
@@ -9,23 +10,39 @@ import (
 
 	"golang.org/x/mod/modfile"
 
+	"github.com/anchore/syft/internal"
+	"github.com/anchore/syft/internal/licenses"
 	"github.com/anchore/syft/internal/log"
 	"github.com/anchore/syft/syft/artifact"
+	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/pkg/cataloger/generic"
-	"github.com/anchore/syft/syft/source"
 )
 
+type goModCataloger struct {
+	licenseResolver goLicenseResolver
+}
+
+func newGoModCataloger(opts CatalogerConfig) *goModCataloger {
+	return &goModCataloger{
+		licenseResolver: newGoLicenseResolver(modFileCatalogerName, opts),
+	}
+}
+
 // parseGoModFile takes a go.mod and lists all packages discovered.
-func parseGoModFile(resolver source.FileResolver, _ *generic.Environment, reader source.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
+//
+//nolint:funlen
+func (c *goModCataloger) parseGoModFile(ctx context.Context, resolver file.Resolver, _ *generic.Environment, reader file.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
 	packages := make(map[string]pkg.Package)
+
+	licenseScanner := licenses.ContextLicenseScanner(ctx)
 
 	contents, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read go module: %w", err)
 	}
 
-	file, err := modfile.Parse(reader.RealPath, contents, nil)
+	f, err := modfile.Parse(reader.RealPath, contents, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse go module: %w", err)
 	}
@@ -35,39 +52,46 @@ func parseGoModFile(resolver source.FileResolver, _ *generic.Environment, reader
 		log.Debugf("unable to get go.sum: %v", err)
 	}
 
-	for _, m := range file.Require {
+	for _, m := range f.Require {
+		lics := c.licenseResolver.getLicenses(ctx, licenseScanner, resolver, m.Mod.Path, m.Mod.Version)
 		packages[m.Mod.Path] = pkg.Package{
-			Name:         m.Mod.Path,
-			Version:      m.Mod.Version,
-			Locations:    source.NewLocationSet(reader.Location),
-			PURL:         packageURL(m.Mod.Path, m.Mod.Version),
-			Language:     pkg.Go,
-			Type:         pkg.GoModulePkg,
-			MetadataType: pkg.GolangModMetadataType,
-			Metadata: pkg.GolangModMetadata{
+			Name:      m.Mod.Path,
+			Version:   m.Mod.Version,
+			Licenses:  pkg.NewLicenseSet(lics...),
+			Locations: file.NewLocationSet(reader.Location.WithAnnotation(pkg.EvidenceAnnotationKey, pkg.PrimaryEvidenceAnnotation)),
+			PURL:      packageURL(m.Mod.Path, m.Mod.Version),
+			Language:  pkg.Go,
+			Type:      pkg.GoModulePkg,
+			Metadata: pkg.GolangModuleEntry{
 				H1Digest: digests[fmt.Sprintf("%s %s", m.Mod.Path, m.Mod.Version)],
 			},
 		}
 	}
 
 	// remove any old packages and replace with new ones...
-	for _, m := range file.Replace {
+	for _, m := range f.Replace {
+		lics := c.licenseResolver.getLicenses(ctx, licenseScanner, resolver, m.New.Path, m.New.Version)
+
+		// the old path and new path may be the same, in which case this is a noop,
+		// but if they're different we need to remove the old package.
+		delete(packages, m.Old.Path)
+
 		packages[m.New.Path] = pkg.Package{
-			Name:         m.New.Path,
-			Version:      m.New.Version,
-			Locations:    source.NewLocationSet(reader.Location),
-			PURL:         packageURL(m.New.Path, m.New.Version),
-			Language:     pkg.Go,
-			Type:         pkg.GoModulePkg,
-			MetadataType: pkg.GolangModMetadataType,
-			Metadata: pkg.GolangModMetadata{
+			Name:      m.New.Path,
+			Version:   m.New.Version,
+			Licenses:  pkg.NewLicenseSet(lics...),
+			Locations: file.NewLocationSet(reader.Location.WithAnnotation(pkg.EvidenceAnnotationKey, pkg.PrimaryEvidenceAnnotation)),
+			PURL:      packageURL(m.New.Path, m.New.Version),
+			Language:  pkg.Go,
+			Type:      pkg.GoModulePkg,
+			Metadata: pkg.GolangModuleEntry{
 				H1Digest: digests[fmt.Sprintf("%s %s", m.New.Path, m.New.Version)],
 			},
 		}
 	}
 
 	// remove any packages from the exclude fields
-	for _, m := range file.Exclude {
+	for _, m := range f.Exclude {
 		delete(packages, m.Mod.Path)
 	}
 
@@ -86,7 +110,7 @@ func parseGoModFile(resolver source.FileResolver, _ *generic.Environment, reader
 	return pkgsSlice, nil, nil
 }
 
-func parseGoSumFile(resolver source.FileResolver, reader source.LocationReadCloser) (map[string]string, error) {
+func parseGoSumFile(resolver file.Resolver, reader file.LocationReadCloser) (map[string]string, error) {
 	out := map[string]string{}
 
 	if resolver == nil {
@@ -102,6 +126,7 @@ func parseGoSumFile(resolver source.FileResolver, reader source.LocationReadClos
 	if err != nil {
 		return nil, err
 	}
+	defer internal.CloseAndLogError(contents, goSumLocation.AccessPath)
 
 	// go.sum has the format like:
 	// github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=

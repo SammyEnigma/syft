@@ -2,6 +2,7 @@ package ruby
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -11,14 +12,19 @@ import (
 
 	"github.com/anchore/syft/internal"
 	"github.com/anchore/syft/syft/artifact"
+	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/pkg/cataloger/generic"
-	"github.com/anchore/syft/syft/source"
 )
 
 var _ generic.Parser = parseGemFileLockEntries
 
 type postProcessor func(string) []string
+
+type gemData struct {
+	Licenses        []string `mapstructure:"licenses" json:"licenses,omitempty"`
+	pkg.RubyGemspec `mapstructure:",squash" json:",inline"`
+}
 
 // match example:      Al\u003Ex   --->   003E
 var unicodePattern = regexp.MustCompile(`\\u(?P<unicode>[0-9A-F]{4})`)
@@ -59,7 +65,8 @@ func processList(s string) []string {
 	return results
 }
 
-func parseGemSpecEntries(_ source.FileResolver, _ *generic.Environment, reader source.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
+// parseGemSpecEntries parses the gemspec file and returns the packages and relationships found.
+func parseGemSpecEntries(_ context.Context, _ file.Resolver, _ *generic.Environment, reader file.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
 	var pkgs []pkg.Package
 	var fields = make(map[string]interface{})
 	scanner := bufio.NewScanner(reader)
@@ -90,18 +97,24 @@ func parseGemSpecEntries(_ source.FileResolver, _ *generic.Environment, reader s
 	}
 
 	if fields["name"] != "" && fields["version"] != "" {
-		var metadata pkg.GemMetadata
+		var metadata gemData
 		if err := mapstructure.Decode(fields, &metadata); err != nil {
 			return nil, nil, fmt.Errorf("unable to decode gem metadata: %w", err)
 		}
 
-		pkgs = append(pkgs, newGemspecPackage(metadata, reader.Location))
+		pkgs = append(
+			pkgs,
+			newGemspecPackage(
+				metadata,
+				reader.Location,
+			),
+		)
 	}
 
 	return pkgs, nil, nil
 }
 
-// renderUtf8 takes any string escaped string sub-sections from the ruby string and replaces those sections with the UTF8 runes.
+// renderUtf8 takes any string escaped string subsections from the ruby string and replaces those sections with the UTF8 runes.
 func renderUtf8(s string) string {
 	fullReplacement := unicodePattern.ReplaceAllStringFunc(s, func(unicodeSection string) string {
 		var replacement string

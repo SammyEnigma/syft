@@ -9,9 +9,10 @@ import (
 	"github.com/acobaugh/osrelease"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/anchore/go-logger"
 	"github.com/anchore/syft/internal"
 	"github.com/anchore/syft/internal/log"
-	"github.com/anchore/syft/syft/source"
+	"github.com/anchore/syft/syft/file"
 )
 
 // returns a distro or nil
@@ -54,7 +55,7 @@ var identityFiles = []parseEntry{
 }
 
 // IdentifyRelease parses distro-specific files to discover and raise linux distribution release details.
-func IdentifyRelease(resolver source.FileResolver) *Release {
+func IdentifyRelease(resolver file.Resolver) *Release {
 	logger := log.Nested("operation", "identify-release")
 	for _, entry := range identityFiles {
 		locations, err := resolver.FilesByPath(entry.path)
@@ -64,25 +65,7 @@ func IdentifyRelease(resolver source.FileResolver) *Release {
 		}
 
 		for _, location := range locations {
-			contentReader, err := resolver.FileContentsByLocation(location)
-			if err != nil {
-				logger.WithFields("error", err, "path", location.RealPath).Trace("unable to get contents")
-				continue
-			}
-
-			content, err := io.ReadAll(contentReader)
-			internal.CloseAndLogError(contentReader, location.VirtualPath)
-			if err != nil {
-				logger.WithFields("error", err, "path", location.RealPath).Trace("unable to read contents")
-				continue
-			}
-
-			release, err := entry.fn(string(content))
-			if err != nil {
-				logger.WithFields("error", err, "path", location.RealPath).Trace("unable to parse contents")
-				continue
-			}
-
+			release := tryParseReleaseInfo(resolver, location, logger, entry)
 			if release != nil {
 				return release
 			}
@@ -90,6 +73,29 @@ func IdentifyRelease(resolver source.FileResolver) *Release {
 	}
 
 	return nil
+}
+
+func tryParseReleaseInfo(resolver file.Resolver, location file.Location, logger logger.Logger, entry parseEntry) *Release {
+	contentReader, err := resolver.FileContentsByLocation(location)
+	if err != nil {
+		logger.WithFields("error", err, "path", location.RealPath).Trace("unable to get contents")
+		return nil
+	}
+	defer internal.CloseAndLogError(contentReader, location.AccessPath)
+
+	content, err := io.ReadAll(contentReader)
+	if err != nil {
+		logger.WithFields("error", err, "path", location.RealPath).Trace("unable to read contents")
+		return nil
+	}
+
+	release, err := entry.fn(string(content))
+	if err != nil {
+		logger.WithFields("error", err, "path", location.RealPath).Trace("unable to parse contents")
+		return nil
+	}
+
+	return release
 }
 
 func parseOsRelease(contents string) (*Release, error) {
@@ -125,6 +131,7 @@ func parseOsRelease(contents string) (*Release, error) {
 		BugReportURL:     values["BUG_REPORT_URL"],
 		PrivacyPolicyURL: values["PRIVACY_POLICY_URL"],
 		CPEName:          values["CPE_NAME"],
+		SupportEnd:       values["SUPPORT_END"],
 	}
 
 	// don't allow for empty contents to result in a Release object being created

@@ -31,19 +31,14 @@ func TestJSONSchema(t *testing.T) {
 		fixture    func(*testing.T) string
 	}{
 		{
-			name:       "packages:image:docker-archive:pkg-coverage",
-			subcommand: "packages",
+			name:       "scan:image:docker-archive:pkg-coverage",
+			subcommand: "scan",
 			args:       []string{"-o", "json"},
 			fixture:    imageFixture,
 		},
 		{
-			name:       "power-user:image:docker-archive:pkg-coverage",
-			subcommand: "power-user",
-			fixture:    imageFixture,
-		},
-		{
-			name:       "packages:dir:pkg-coverage",
-			subcommand: "packages",
+			name:       "scan:dir:pkg-coverage",
+			subcommand: "scan",
 			args:       []string{"-o", "json"},
 			fixture: func(t *testing.T) string {
 				return "dir:test-fixtures/image-pkg-coverage"
@@ -57,9 +52,7 @@ func TestJSONSchema(t *testing.T) {
 			args := []string{
 				test.subcommand, fixtureRef, "-q",
 			}
-			for _, a := range test.args {
-				args = append(args, a)
-			}
+			args = append(args, test.args...)
 
 			_, stdout, stderr := runSyft(t, nil, args...)
 

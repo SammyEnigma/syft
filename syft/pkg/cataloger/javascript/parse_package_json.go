@@ -1,6 +1,7 @@
 package javascript
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,11 +11,10 @@ import (
 	"github.com/mitchellh/mapstructure"
 
 	"github.com/anchore/syft/internal"
-	"github.com/anchore/syft/internal/log"
 	"github.com/anchore/syft/syft/artifact"
+	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/pkg/cataloger/generic"
-	"github.com/anchore/syft/syft/source"
 )
 
 // integrity check
@@ -51,7 +51,7 @@ type repository struct {
 var authorPattern = regexp.MustCompile(`^\s*(?P<name>[^<(]*)(\s+<(?P<email>.*)>)?(\s\((?P<url>.*)\))?\s*$`)
 
 // parsePackageJSON parses a package.json and returns the discovered JavaScript packages.
-func parsePackageJSON(_ source.FileResolver, _ *generic.Environment, reader source.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
+func parsePackageJSON(_ context.Context, _ file.Resolver, _ *generic.Environment, reader file.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
 	var pkgs []pkg.Package
 	dec := json.NewDecoder(reader)
 
@@ -63,12 +63,12 @@ func parsePackageJSON(_ source.FileResolver, _ *generic.Environment, reader sour
 			return nil, nil, fmt.Errorf("failed to parse package.json file: %w", err)
 		}
 
-		if !p.hasNameAndVersionValues() {
-			log.Debugf("encountered package.json file without a name and/or version field, ignoring (path=%q)", reader.AccessPath())
-			return nil, nil, nil
-		}
-
-		pkgs = append(pkgs, newPackageJSONPackage(p, reader.Location))
+		// always create a package, regardless of having a valid name and/or version,
+		// a compliance filter later will remove these packages based on compliance rules
+		pkgs = append(
+			pkgs,
+			newPackageJSONPackage(p, reader.Location.WithAnnotation(pkg.EvidenceAnnotationKey, pkg.PrimaryEvidenceAnnotation)),
+		)
 	}
 
 	pkg.Sort(pkgs)
@@ -78,23 +78,23 @@ func parsePackageJSON(_ source.FileResolver, _ *generic.Environment, reader sour
 
 func (a *author) UnmarshalJSON(b []byte) error {
 	var authorStr string
-	var fields map[string]string
 	var auth author
 
-	if err := json.Unmarshal(b, &authorStr); err != nil {
-		// string parsing did not work, assume a map was given
-		// for more information: https://docs.npmjs.com/files/package.json#people-fields-author-contributors
+	if err := json.Unmarshal(b, &authorStr); err == nil {
+		// successfully parsed as a string, now parse that string into fields
+		fields := internal.MatchNamedCaptureGroups(authorPattern, authorStr)
+		if err := mapstructure.Decode(fields, &auth); err != nil {
+			return fmt.Errorf("unable to decode package.json author: %w", err)
+		}
+	} else {
+		// it's a map that may contain fields of various data types (not just strings)
+		var fields map[string]interface{}
 		if err := json.Unmarshal(b, &fields); err != nil {
 			return fmt.Errorf("unable to parse package.json author: %w", err)
 		}
-	} else {
-		// parse out "name <email> (url)" into an author struct
-		fields = internal.MatchNamedCaptureGroups(authorPattern, authorStr)
-	}
-
-	// translate the map into a structure
-	if err := mapstructure.Decode(fields, &auth); err != nil {
-		return fmt.Errorf("unable to decode package.json author: %w", err)
+		if err := mapstructure.Decode(fields, &auth); err != nil {
+			return fmt.Errorf("unable to decode package.json author: %w", err)
+		}
 	}
 
 	*a = auth
@@ -137,7 +137,7 @@ func (r *repository) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-type license struct {
+type npmPackageLicense struct {
 	Type string `json:"type"`
 	URL  string `json:"url"`
 }
@@ -151,7 +151,7 @@ func licenseFromJSON(b []byte) (string, error) {
 	}
 
 	// then try as object (this format is deprecated)
-	var licenseObject license
+	var licenseObject npmPackageLicense
 	err = json.Unmarshal(b, &licenseObject)
 	if err == nil {
 		return licenseObject.Type, nil
@@ -175,7 +175,7 @@ func (p packageJSON) licensesFromJSON() ([]string, error) {
 
 	// The "licenses" field is deprecated. It should be inspected as a last resort.
 	if multiLicense != nil && err == nil {
-		mapLicenses := func(licenses []license) []string {
+		mapLicenses := func(licenses []npmPackageLicense) []string {
 			mappedLicenses := make([]string, len(licenses))
 			for i, l := range licenses {
 				mappedLicenses[i] = l.Type
@@ -189,18 +189,14 @@ func (p packageJSON) licensesFromJSON() ([]string, error) {
 	return nil, err
 }
 
-func licensesFromJSON(b []byte) ([]license, error) {
-	var licenseObject []license
+func licensesFromJSON(b []byte) ([]npmPackageLicense, error) {
+	var licenseObject []npmPackageLicense
 	err := json.Unmarshal(b, &licenseObject)
 	if err == nil {
 		return licenseObject, nil
 	}
 
 	return nil, errors.New("unmarshal failed")
-}
-
-func (p packageJSON) hasNameAndVersionValues() bool {
-	return p.Name != "" && p.Version != ""
 }
 
 // this supports both windows and unix paths

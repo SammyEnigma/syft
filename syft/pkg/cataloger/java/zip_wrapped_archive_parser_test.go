@@ -1,6 +1,7 @@
 package java
 
 import (
+	"context"
 	"os"
 	"path"
 	"testing"
@@ -8,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/anchore/syft/syft/source"
+	"github.com/anchore/syft/syft/file"
 )
 
 func Test_parseZipWrappedJavaArchive(t *testing.T) {
@@ -33,8 +34,10 @@ func Test_parseZipWrappedJavaArchive(t *testing.T) {
 				t.Fatalf("failed to open fixture: %+v", err)
 			}
 
-			actualPkgs, _, err := parseZipWrappedJavaArchive(nil, nil, source.LocationReadCloser{
-				Location:   source.NewLocation(test.fixture),
+			gzp := newGenericZipWrappedJavaArchiveParser(ArchiveCatalogerConfig{})
+
+			actualPkgs, _, err := gzp.parseZipWrappedJavaArchive(context.Background(), nil, nil, file.LocationReadCloser{
+				Location:   file.NewLocation(test.fixture),
 				ReadCloser: fixture,
 			})
 			require.NoError(t, err)

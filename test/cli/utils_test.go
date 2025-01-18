@@ -1,10 +1,9 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
+	"flag"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -21,28 +20,14 @@ import (
 	"github.com/anchore/stereoscope/pkg/imagetest"
 )
 
-func runAndShow(t *testing.T, cmd *exec.Cmd) {
-	t.Helper()
+var showOutput = flag.Bool("show-output", false, "show stdout and stderr for failing tests")
 
-	stderr, err := cmd.StderrPipe()
-	require.NoErrorf(t, err, "could not get stderr: +v", err)
-
-	stdout, err := cmd.StdoutPipe()
-	require.NoErrorf(t, err, "could not get stdout: +v", err)
-
-	err = cmd.Start()
-	require.NoErrorf(t, err, "failed to start cmd: %+v", err)
-
-	show := func(label string, reader io.ReadCloser) {
-		scanner := bufio.NewScanner(reader)
-		scanner.Split(bufio.ScanLines)
-		for scanner.Scan() {
-			t.Logf("%s: %s", label, scanner.Text())
-		}
+func logOutputOnFailure(t testing.TB, cmd *exec.Cmd, stdout, stderr string) {
+	if t.Failed() && showOutput != nil && *showOutput {
+		t.Log("STDOUT:\n", stdout)
+		t.Log("STDERR:\n", stderr)
+		t.Log("COMMAND:", strings.Join(cmd.Args, " "))
 	}
-
-	show("out", stdout)
-	show("err", stderr)
 }
 
 func setupPKI(t *testing.T, pw string) func() {
@@ -284,11 +269,15 @@ func getSyftCommand(t testing.TB, args ...string) *exec.Cmd {
 }
 
 func getSyftBinaryLocation(t testing.TB) string {
-	if os.Getenv("SYFT_BINARY_LOCATION") != "" {
+	const envKey = "SYFT_BINARY_LOCATION"
+	if os.Getenv(envKey) != "" {
 		// SYFT_BINARY_LOCATION is the absolute path to the snapshot binary
-		return os.Getenv("SYFT_BINARY_LOCATION")
+		return os.Getenv(envKey)
 	}
-	return getSyftBinaryLocationByOS(t, runtime.GOOS)
+	loc := getSyftBinaryLocationByOS(t, runtime.GOOS)
+	buildBinary(t, loc)
+	_ = os.Setenv(envKey, loc)
+	return loc
 }
 
 func getSyftBinaryLocationByOS(t testing.TB, goOS string) string {
@@ -306,6 +295,21 @@ func getSyftBinaryLocationByOS(t testing.TB, goOS string) string {
 		t.Fatalf("unsupported OS: %s", runtime.GOOS)
 	}
 	return ""
+}
+
+func buildBinary(t testing.TB, loc string) {
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(repoRoot(t)))
+	defer func() {
+		require.NoError(t, os.Chdir(wd))
+	}()
+	t.Log("Building syft...")
+	c := exec.Command("go", "build", "-o", loc, "./cmd/syft")
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	c.Stdin = os.Stdin
+	require.NoError(t, c.Run())
 }
 
 func repoRoot(t testing.TB) string {

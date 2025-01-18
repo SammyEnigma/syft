@@ -1,21 +1,35 @@
 /*
-Package golang provides a concrete Cataloger implementation for go.mod files.
+Package golang provides a concrete Cataloger implementation relating to packages within the Go language ecosystem.
 */
 package golang
 
 import (
-	"github.com/anchore/syft/internal"
+	"regexp"
+
+	"github.com/anchore/syft/internal/mimetype"
+	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/pkg/cataloger/generic"
 )
 
-// NewGoModFileCataloger returns a new Go module cataloger object.
-func NewGoModFileCataloger() *generic.Cataloger {
-	return generic.NewCataloger("go-mod-file-cataloger").
-		WithParserByGlobs(parseGoModFile, "**/go.mod")
+var versionCandidateGroups = regexp.MustCompile(`(?P<version>\d+(\.\d+)?(\.\d+)?)(?P<candidate>\w*)`)
+
+const (
+	modFileCatalogerName = "go-module-file-cataloger"
+	binaryCatalogerName  = "go-module-binary-cataloger"
+)
+
+// NewGoModuleFileCataloger returns a new cataloger object that searches within go.mod files.
+func NewGoModuleFileCataloger(opts CatalogerConfig) pkg.Cataloger {
+	return generic.NewCataloger(modFileCatalogerName).
+		WithParserByGlobs(newGoModCataloger(opts).parseGoModFile, "**/go.mod")
 }
 
-// NewGoModuleBinaryCataloger returns a new Golang cataloger object.
-func NewGoModuleBinaryCataloger() *generic.Cataloger {
-	return generic.NewCataloger("go-module-binary-cataloger").
-		WithParserByMimeTypes(parseGoBinary, internal.ExecutableMIMETypeSet.List()...)
+// NewGoModuleBinaryCataloger returns a new cataloger object that searches within binaries built by the go compiler.
+func NewGoModuleBinaryCataloger(opts CatalogerConfig) pkg.Cataloger {
+	return generic.NewCataloger(binaryCatalogerName).
+		WithParserByMimeTypes(
+			newGoBinaryCataloger(opts).parseGoBinary,
+			mimetype.ExecutableMIMETypeSet.List()...,
+		).
+		WithProcessors(stdlibProcessor)
 }

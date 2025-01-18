@@ -1,16 +1,18 @@
 package swift
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/anchore/syft/internal/unknown"
 	"github.com/anchore/syft/syft/artifact"
+	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/pkg/cataloger/generic"
-	"github.com/anchore/syft/syft/source"
 )
 
 var _ generic.Parser = parsePodfileLock
@@ -25,7 +27,7 @@ type podfileLock struct {
 }
 
 // parsePodfileLock is a parser function for Podfile.lock contents, returning all cocoapods pods discovered.
-func parsePodfileLock(_ source.FileResolver, _ *generic.Environment, reader source.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
+func parsePodfileLock(_ context.Context, _ file.Resolver, _ *generic.Environment, reader file.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
 	bytes, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to read file: %w", err)
@@ -59,8 +61,16 @@ func parsePodfileLock(_ source.FileResolver, _ *generic.Environment, reader sour
 			return nil, nil, fmt.Errorf("malformed podfile.lock: incomplete checksums")
 		}
 
-		pkgs = append(pkgs, newPackage(podName, podVersion, pkgHash, reader.Location))
+		pkgs = append(
+			pkgs,
+			newCocoaPodsPackage(
+				podName,
+				podVersion,
+				pkgHash,
+				reader.Location.WithAnnotation(pkg.EvidenceAnnotationKey, pkg.PrimaryEvidenceAnnotation),
+			),
+		)
 	}
 
-	return pkgs, nil, nil
+	return pkgs, nil, unknown.IfEmptyf(pkgs, "unable to determine packages")
 }

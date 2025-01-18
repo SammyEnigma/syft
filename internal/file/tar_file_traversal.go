@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/mholt/archiver/v3"
+
+	"github.com/anchore/archiver/v3"
 )
 
 // ExtractGlobsFromTarToUniqueTempFile extracts paths matching the given globs within the given archive to a temporary directory, returning file openers for each file extracted.
@@ -32,12 +33,12 @@ func ExtractGlobsFromTarToUniqueTempFile(archivePath, dir string, globs ...strin
 		}
 
 		// we have a file we want to extract....
-		tempfilePrefix := filepath.Base(filepath.Clean(file.Name())) + "-"
-		tempFile, err := os.CreateTemp(dir, tempfilePrefix)
+		tempFilePrefix := filepath.Base(filepath.Clean(file.Name())) + "-"
+		tempFile, err := os.CreateTemp(dir, tempFilePrefix)
 		if err != nil {
 			return fmt.Errorf("unable to create temp file: %w", err)
 		}
-		// we shouldn't try and keep the tempfile open as the returned result may have several files, which takes up
+		// we shouldn't try and keep the tempFile open as the returned result may have several files, which takes up
 		// resources (leading to "too many open files"). Instead we'll return a file opener to the caller which
 		// provides a ReadCloser. It is up to the caller to handle closing the file explicitly.
 		defer tempFile.Close()

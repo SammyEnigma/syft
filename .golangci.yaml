@@ -1,5 +1,6 @@
 issues:
   max-same-issues: 25
+  uniq-by-line: false
 
   # TODO: enable this when we have coverage on docstring comments
 #  # The list of ids of default excludes to include or disable.
@@ -12,11 +13,10 @@ linters:
   enable:
     - asciicheck
     - bodyclose
-    - depguard
+    - copyloopvar
     - dogsled
     - dupl
     - errcheck
-    - exportloopref
     - funlen
     - gocognit
     - goconst
@@ -31,6 +31,7 @@ linters:
     - ineffassign
     - misspell
     - nakedret
+    - nolintlint
     - revive
     - staticcheck
     - stylecheck
@@ -50,13 +51,23 @@ linters-settings:
     # If lower than 0, disable the check.
     # Default: 40
     statements: 50
-output:
-  uniq-by-line: false
+  gocritic:
+    enabled-checks:
+      - deferInLoop
+      - ruleguard
+    settings:
+      ruleguard:
+        rules: "test/rules/rules.go"
+  gosec:
+    excludes:
+      - G115
 run:
   timeout: 10m
+  tests: false
 
 # do not enable...
 #    - deadcode          # The owner seems to have abandoned the linter. Replaced by "unused".
+#    - depguard          # We don't have a configuration for this yet
 #    - goprintffuncname  # does not catch all cases and there are exceptions
 #    - nakedret          # does not catch all cases and should not fail a build
 #    - gochecknoglobals
@@ -72,7 +83,6 @@ run:
 #    - lll         # without a way to specify per-line exception cases, this is not usable
 #    - maligned    # this is an excellent linter, but tricky to optimize and we are not sensitive to memory layout optimizations
 #    - nestif
-#    - nolintlint   # as of go1.19 this conflicts with the behavior of gofmt, which is a deal-breaker (lint-fix will still fail when running lint)
 #    - prealloc     # following this rule isn't consistently a good idea, as it sometimes forces unnecessary allocations that result in less idiomatic code
 #    - rowserrcheck # not in a repo with sql, so this is not useful
 #    - scopelint    # deprecated

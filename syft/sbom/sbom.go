@@ -1,10 +1,10 @@
 package sbom
 
 import (
+	"slices"
 	"sort"
 
-	"golang.org/x/exp/slices"
-
+	"github.com/anchore/syft/internal/log"
 	"github.com/anchore/syft/syft/artifact"
 	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/linux"
@@ -15,16 +15,18 @@ import (
 type SBOM struct {
 	Artifacts     Artifacts
 	Relationships []artifact.Relationship
-	Source        source.Metadata
+	Source        source.Description
 	Descriptor    Descriptor
 }
 
 type Artifacts struct {
-	PackageCatalog    *pkg.Catalog
-	FileMetadata      map[source.Coordinates]source.FileMetadata
-	FileDigests       map[source.Coordinates][]file.Digest
-	FileContents      map[source.Coordinates]string
-	Secrets           map[source.Coordinates][]file.SearchResult
+	Packages          *pkg.Collection
+	FileMetadata      map[file.Coordinates]file.Metadata
+	FileDigests       map[file.Coordinates][]file.Digest
+	FileContents      map[file.Coordinates]string
+	FileLicenses      map[file.Coordinates][]file.License
+	Executables       map[file.Coordinates]file.Executable
+	Unknowns          map[file.Coordinates][]string
 	LinuxDistribution *linux.Release
 }
 
@@ -34,6 +36,8 @@ type Descriptor struct {
 	Configuration interface{}
 }
 
+// RelationshipsSorted returns a sorted slice of all relationships
+// Deprecated -- use relationship.Index
 func (s SBOM) RelationshipsSorted() []artifact.Relationship {
 	relationships := s.Relationships
 	sort.SliceStable(relationships, func(i, j int) bool {
@@ -48,8 +52,8 @@ func (s SBOM) RelationshipsSorted() []artifact.Relationship {
 	return relationships
 }
 
-func (s SBOM) AllCoordinates() []source.Coordinates {
-	set := source.NewCoordinateSet()
+func (s SBOM) AllCoordinates() []file.Coordinates {
+	set := file.NewCoordinateSet()
 	for coordinates := range s.Artifacts.FileMetadata {
 		set.Add(coordinates)
 	}
@@ -57,6 +61,9 @@ func (s SBOM) AllCoordinates() []source.Coordinates {
 		set.Add(coordinates)
 	}
 	for coordinates := range s.Artifacts.FileDigests {
+		set.Add(coordinates)
+	}
+	for coordinates := range s.Artifacts.Unknowns {
 		set.Add(coordinates)
 	}
 	for _, relationship := range s.Relationships {
@@ -69,18 +76,33 @@ func (s SBOM) AllCoordinates() []source.Coordinates {
 
 // RelationshipsForPackage returns all relationships for the provided types.
 // If no types are provided, all relationships for the package are returned.
+// Deprecated -- use relationship.Index
 func (s SBOM) RelationshipsForPackage(p pkg.Package, rt ...artifact.RelationshipType) []artifact.Relationship {
 	if len(rt) == 0 {
 		rt = artifact.AllRelationshipTypes()
 	}
 
+	pID := p.ID()
+
 	var relationships []artifact.Relationship
 	for _, relationship := range s.Relationships {
-		// check if the relationship is one we're searching for; rt is inclusive
-		idx := slices.IndexFunc(rt, func(r artifact.RelationshipType) bool { return relationship.Type == r })
-		if relationship.From.ID() == p.ID() && idx != -1 {
-			relationships = append(relationships, relationship)
+		if relationship.From == nil || relationship.To == nil {
+			log.Debugf("relationship has nil edge, skipping: %#v", relationship)
+			continue
 		}
+		fromID := relationship.From.ID()
+		toID := relationship.To.ID()
+		hasPkgID := fromID == pID || toID == pID
+
+		if !hasPkgID {
+			continue
+		}
+
+		// check if the relationship is one we're searching for; rt is inclusive
+		if !slices.ContainsFunc(rt, func(r artifact.RelationshipType) bool { return relationship.Type == r }) {
+			continue
+		}
+		relationships = append(relationships, relationship)
 	}
 
 	return relationships
@@ -88,8 +110,9 @@ func (s SBOM) RelationshipsForPackage(p pkg.Package, rt ...artifact.Relationship
 
 // CoordinatesForPackage returns all coordinates for the provided package for provided relationship types
 // If no types are provided, all relationship types are considered.
-func (s SBOM) CoordinatesForPackage(p pkg.Package, rt ...artifact.RelationshipType) []source.Coordinates {
-	var coordinates []source.Coordinates
+// Deprecated -- use relationship.Index
+func (s SBOM) CoordinatesForPackage(p pkg.Package, rt ...artifact.RelationshipType) []file.Coordinates {
+	var coordinates []file.Coordinates
 	for _, relationship := range s.RelationshipsForPackage(p, rt...) {
 		cords := extractCoordinates(relationship)
 		coordinates = append(coordinates, cords...)
@@ -97,12 +120,12 @@ func (s SBOM) CoordinatesForPackage(p pkg.Package, rt ...artifact.RelationshipTy
 	return coordinates
 }
 
-func extractCoordinates(relationship artifact.Relationship) (results []source.Coordinates) {
-	if coordinates, exists := relationship.From.(source.Coordinates); exists {
+func extractCoordinates(relationship artifact.Relationship) (results []file.Coordinates) {
+	if coordinates, exists := relationship.From.(file.Coordinates); exists {
 		results = append(results, coordinates)
 	}
 
-	if coordinates, exists := relationship.To.(source.Coordinates); exists {
+	if coordinates, exists := relationship.To.(file.Coordinates); exists {
 		results = append(results, coordinates)
 	}
 

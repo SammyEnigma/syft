@@ -1,29 +1,30 @@
 package pkgtest
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"sort"
 
 	"github.com/scylladb/go-set/strset"
 
-	"github.com/anchore/syft/syft/source"
+	"github.com/anchore/syft/syft/file"
 )
 
-var _ source.FileResolver = (*ObservingResolver)(nil)
+var _ file.Resolver = (*ObservingResolver)(nil)
 
 type ObservingResolver struct {
-	decorated          source.FileResolver
+	decorated          file.Resolver
 	pathQueries        map[string][]string
-	pathResponses      []source.Location
-	contentQueries     []source.Location
+	pathResponses      []file.Location
+	contentQueries     []file.Location
 	emptyPathResponses map[string][]string
 }
 
-func NewObservingResolver(resolver source.FileResolver) *ObservingResolver {
+func NewObservingResolver(resolver file.Resolver) *ObservingResolver {
 	return &ObservingResolver{
 		decorated:          resolver,
-		pathResponses:      make([]source.Location, 0),
+		pathResponses:      make([]file.Location, 0),
 		emptyPathResponses: make(map[string][]string),
 		pathQueries:        make(map[string][]string),
 	}
@@ -138,11 +139,11 @@ func (r *ObservingResolver) addPathQuery(name string, input ...string) {
 	r.pathQueries[name] = append(r.pathQueries[name], input...)
 }
 
-func (r *ObservingResolver) addPathResponse(locs ...source.Location) {
+func (r *ObservingResolver) addPathResponse(locs ...file.Location) {
 	r.pathResponses = append(r.pathResponses, locs...)
 }
 
-func (r *ObservingResolver) addEmptyPathResponse(name string, locs []source.Location, paths ...string) {
+func (r *ObservingResolver) addEmptyPathResponse(name string, locs []file.Location, paths ...string) {
 	if len(locs) == 0 {
 		results := r.emptyPathResponses[name]
 		results = append(results, paths...)
@@ -150,7 +151,7 @@ func (r *ObservingResolver) addEmptyPathResponse(name string, locs []source.Loca
 	}
 }
 
-func (r *ObservingResolver) FilesByPath(paths ...string) ([]source.Location, error) {
+func (r *ObservingResolver) FilesByPath(paths ...string) ([]file.Location, error) {
 	name := "FilesByPath"
 	r.addPathQuery(name, paths...)
 
@@ -161,7 +162,7 @@ func (r *ObservingResolver) FilesByPath(paths ...string) ([]source.Location, err
 	return locs, err
 }
 
-func (r *ObservingResolver) FilesByGlob(patterns ...string) ([]source.Location, error) {
+func (r *ObservingResolver) FilesByGlob(patterns ...string) ([]file.Location, error) {
 	name := "FilesByGlob"
 	r.addPathQuery(name, patterns...)
 
@@ -172,7 +173,7 @@ func (r *ObservingResolver) FilesByGlob(patterns ...string) ([]source.Location, 
 	return locs, err
 }
 
-func (r *ObservingResolver) FilesByMIMEType(types ...string) ([]source.Location, error) {
+func (r *ObservingResolver) FilesByMIMEType(types ...string) ([]file.Location, error) {
 	name := "FilesByMIMEType"
 	r.addPathQuery(name, types...)
 
@@ -183,7 +184,7 @@ func (r *ObservingResolver) FilesByMIMEType(types ...string) ([]source.Location,
 	return locs, err
 }
 
-func (r *ObservingResolver) RelativeFileByPath(l source.Location, path string) *source.Location {
+func (r *ObservingResolver) RelativeFileByPath(l file.Location, path string) *file.Location {
 	name := "RelativeFileByPath"
 	r.addPathQuery(name, path)
 
@@ -201,7 +202,7 @@ func (r *ObservingResolver) RelativeFileByPath(l source.Location, path string) *
 
 // For the content resolver methods...
 
-func (r *ObservingResolver) FileContentsByLocation(location source.Location) (io.ReadCloser, error) {
+func (r *ObservingResolver) FileContentsByLocation(location file.Location) (io.ReadCloser, error) {
 	r.contentQueries = append(r.contentQueries, location)
 	reader, err := r.decorated.FileContentsByLocation(location)
 	return reader, err
@@ -209,14 +210,14 @@ func (r *ObservingResolver) FileContentsByLocation(location source.Location) (io
 
 // For the remaining resolver methods...
 
-func (r *ObservingResolver) AllLocations() <-chan source.Location {
-	return r.decorated.AllLocations()
+func (r *ObservingResolver) AllLocations(ctx context.Context) <-chan file.Location {
+	return r.decorated.AllLocations(ctx)
 }
 
 func (r *ObservingResolver) HasPath(s string) bool {
 	return r.decorated.HasPath(s)
 }
 
-func (r *ObservingResolver) FileMetadataByLocation(location source.Location) (source.FileMetadata, error) {
+func (r *ObservingResolver) FileMetadataByLocation(location file.Location) (file.Metadata, error) {
 	return r.decorated.FileMetadataByLocation(location)
 }

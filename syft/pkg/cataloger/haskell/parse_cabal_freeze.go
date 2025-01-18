@@ -2,27 +2,28 @@ package haskell
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/anchore/syft/syft/artifact"
+	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/pkg/cataloger/generic"
-	"github.com/anchore/syft/syft/source"
 )
 
 var _ generic.Parser = parseCabalFreeze
 
 // parseCabalFreeze is a parser function for cabal.project.freeze contents, returning all packages discovered.
-func parseCabalFreeze(_ source.FileResolver, _ *generic.Environment, reader source.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
+func parseCabalFreeze(_ context.Context, _ file.Resolver, _ *generic.Environment, reader file.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
 	r := bufio.NewReader(reader)
 	var pkgs []pkg.Package
 	for {
 		line, err := r.ReadString('\n')
 		switch {
-		case errors.Is(io.EOF, err):
+		case errors.Is(err, io.EOF):
 			return pkgs, nil, nil
 		case err != nil:
 			return nil, nil, fmt.Errorf("failed to parse cabal.project.freeze file: %w", err)
@@ -46,6 +47,14 @@ func parseCabalFreeze(_ source.FileResolver, _ *generic.Environment, reader sour
 		fields := strings.Split(line, " ==")
 
 		pkgName, pkgVersion := fields[0], fields[1]
-		pkgs = append(pkgs, newPackage(pkgName, pkgVersion, nil, reader.Location))
+		pkgs = append(
+			pkgs,
+			newPackage(
+				pkgName,
+				pkgVersion,
+				nil,
+				reader.Location,
+			),
+		)
 	}
 }

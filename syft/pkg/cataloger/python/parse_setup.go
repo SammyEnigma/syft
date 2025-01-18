@@ -2,14 +2,15 @@ package python
 
 import (
 	"bufio"
+	"context"
 	"regexp"
 	"strings"
 
 	"github.com/anchore/syft/internal/log"
 	"github.com/anchore/syft/syft/artifact"
+	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/pkg/cataloger/generic"
-	"github.com/anchore/syft/syft/source"
 )
 
 // integrity check
@@ -22,7 +23,7 @@ var _ generic.Parser = parseSetup
 //	" mypy2 == v0.770", ' mypy3== v0.770',  --> match(name=mypy2 version=v0.770), match(name=mypy3, version=v0.770)
 var pinnedDependency = regexp.MustCompile(`['"]\W?(\w+\W?==\W?[\w.]*)`)
 
-func parseSetup(_ source.FileResolver, _ *generic.Environment, reader source.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
+func parseSetup(_ context.Context, _ file.Resolver, _ *generic.Environment, reader file.LocationReadCloser) ([]pkg.Package, []artifact.Relationship, error) {
 	var packages []pkg.Package
 
 	scanner := bufio.NewScanner(reader)
@@ -53,7 +54,14 @@ func parseSetup(_ source.FileResolver, _ *generic.Environment, reader source.Loc
 				continue
 			}
 
-			packages = append(packages, newPackageForIndex(name, version, reader.Location))
+			packages = append(
+				packages,
+				newPackageForIndex(
+					name,
+					version,
+					reader.Location.WithAnnotation(pkg.EvidenceAnnotationKey, pkg.PrimaryEvidenceAnnotation),
+				),
+			)
 		}
 	}
 

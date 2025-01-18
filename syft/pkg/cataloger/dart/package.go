@@ -2,12 +2,12 @@ package dart
 
 import (
 	"github.com/anchore/packageurl-go"
+	"github.com/anchore/syft/syft/file"
 	"github.com/anchore/syft/syft/pkg"
-	"github.com/anchore/syft/syft/source"
 )
 
-func newPubspecLockPackage(name string, raw pubspecLockPackage, locations ...source.Location) pkg.Package {
-	metadata := pkg.DartPubMetadata{
+func newPubspecLockPackage(name string, raw pubspecLockPackage, locations ...file.Location) pkg.Package {
+	metadata := pkg.DartPubspecLockEntry{
 		Name:      name,
 		Version:   raw.Version,
 		HostedURL: raw.getHostedURL(),
@@ -15,14 +15,13 @@ func newPubspecLockPackage(name string, raw pubspecLockPackage, locations ...sou
 	}
 
 	p := pkg.Package{
-		Name:         name,
-		Version:      raw.Version,
-		Locations:    source.NewLocationSet(locations...),
-		PURL:         packageURL(metadata),
-		Language:     pkg.Dart,
-		Type:         pkg.DartPubPkg,
-		MetadataType: pkg.DartPubMetadataType,
-		Metadata:     metadata,
+		Name:      name,
+		Version:   raw.Version,
+		Locations: file.NewLocationSet(locations...),
+		PURL:      packageURL(metadata),
+		Language:  pkg.Dart,
+		Type:      pkg.DartPubPkg,
+		Metadata:  metadata,
 	}
 
 	p.SetID()
@@ -30,7 +29,7 @@ func newPubspecLockPackage(name string, raw pubspecLockPackage, locations ...sou
 	return p
 }
 
-func packageURL(m pkg.DartPubMetadata) string {
+func packageURL(m pkg.DartPubspecLockEntry) string {
 	var qualifiers packageurl.Qualifiers
 
 	if m.HostedURL != "" {
